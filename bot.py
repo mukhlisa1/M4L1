@@ -1,12 +1,15 @@
 from telebot import TeleBot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+from config import *
 from logic import *
 import schedule
 import threading
 import time
-from config import *
 
+
+manager = DatabaseManager(DATABASE)
 bot = TeleBot(API_TOKEN)
+
 
 def gen_markup(id):
     markup = InlineKeyboardMarkup()
@@ -14,24 +17,18 @@ def gen_markup(id):
     markup.add(InlineKeyboardButton("Получить!", callback_data=id))
     return markup
 
-@bot.message_handler(commands=['rating'])
-def handle_rating(message):
-    res = manager.get_rating() 
-    res = [f'| @{x[0]:<11} | {x[1]:<11}|\n{"_"*26}' for x in res]
-    res = '\n'.join(res)
-    res = f'|USER_NAME    |COUNT_PRIZE|\n{"_"*26}\n' + res
-    bot.send_message(message.chat.id, res)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
 
-    prize_id = call.data
+    prize_id = int(call.data)
     user_id = call.message.chat.id
 
     if manager.get_winners_count(prize_id) < 3:
         res = manager.add_winner(user_id, prize_id)
         if res:
-            img = manager.get_prize_image(prize_id)
+            img = manager.get_prize_img(prize_id)
+            score = manager.get_score(user_id)
             with open(f'img/{img}', 'rb') as photo:
                 bot.send_photo(user_id, photo, caption="Поздравляем! Ты получил картинку!")
         else:
@@ -43,10 +40,9 @@ def callback_query(call):
 def send_message():
     prize_id, img = manager.get_random_prize()[:2]
     manager.mark_prize_used(prize_id)
-    hide_img(img)
     for user in manager.get_users():
         with open(f'hidden_img/{img}', 'rb') as photo:
-            bot.send_photo(user, photo, reply_markup=gen_markup(id = prize_id))
+            bot.send_photo(user, photo, reply_markup=gen_markup(prize_id))
         
 
 def shedule_thread():
@@ -54,6 +50,7 @@ def shedule_thread():
     while True:
         schedule.run_pending()
         time.sleep(1)
+
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -64,11 +61,29 @@ def handle_start(message):
         manager.add_user(user_id, message.from_user.username)
         bot.reply_to(message, """Привет! Добро пожаловать! 
 Тебя успешно зарегистрировали!
-Каждый час тебе будут приходить новые картинки и у тебя будет шанс их получить!
+Каждую минуту тебе будут приходить новые картинки и у тебя будет шанс их получить!
 Для этого нужно быстрее всех нажать на кнопку 'Получить!'
 
 Только три первых пользователя получат картинку!)""")
         
+@bot.message_handler(commands=['rating'])
+def handle_rating(message):
+    res = manager.get_rating() 
+    res = [f'| @{x[0]:<11} | {x[1]:<11}|\n{"_"*26}' for x in res]
+    res = '\n'.join(res)
+    res = f'|USER_NAME    |COUNT_PRIZE|\n{"_"*26}\n' + res
+    bot.send_message(message.chat.id, res)
+
+@bot.message_handler(commands=['bonus'])
+def handle_bonus(message):
+    user_id = message.chat.id
+    success = manager.redeem_bonus(user_id)
+    if success:
+        bot.send_message(user_id, "Ты получил экстра-бонус! (потрачено 10 монет)")
+    else:
+        coins = manager.get_score(user_id) 
+        bot.send_message(user_id, f"У тебя недостаточно монет. Нужно 10, а у тебя — {coins}.")
+
 
 
 def polling_thread():
